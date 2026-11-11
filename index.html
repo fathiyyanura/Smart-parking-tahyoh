@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Parking - Sistem Monitoring Parkir Pintar</title>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8.5/dist/teachablemachine-image.min.js"></script>
+<script>
+tailwind.config={theme:{extend:{colors:{tayo:{blue:'#0072CE',red:'#E53935',green:'#4CAF50',yellow:'#FBC02D'}}}}}
+</script>
+<style>
+body{font-family:'Nunito',sans-serif;background-color:#F4F8FC;background-image:radial-gradient(#0072CE .75px,transparent .75px),radial-gradient(#FBC02D .75px,#F4F8FC .75px);background-size:30px 30px;background-position:0 0,15px 15px}
+h1,h2,h3,.font-title{font-family:'Fredoka',sans-serif}
+.card{background:#fff;border-radius:1.5rem;border:3px solid #E2E8F0;box-shadow:0 10px 25px -5px rgba(0,114,206,.1)}
+.pulse-dot{animation:pulse 1.6s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(76,175,80,.7)}70%{box-shadow:0 0 0 10px rgba(76,175,80,0)}100%{box-shadow:0 0 0 0 rgba(76,175,80,0)}}
+.gate-arm{transform-origin:left center;transition:transform .6s cubic-bezier(.34,1.56,.64,1)}
+.gate-arm.open{transform:rotate(-65deg)}
+#cam-box canvas{width:100%;height:100%;object-fit:cover}
+.slot{transition:all .25s}
+.slot.demo{cursor:pointer}.slot.demo:active{transform:scale(.95)}
+@media (prefers-reduced-motion:reduce){.pulse-dot{animation:none}.gate-arm{transition:none}}
+</style>
+</head>
+<body class="min-h-screen text-slate-800 pb-12">
+
+<header class="bg-tayo-blue text-white pt-6 pb-12 px-4 shadow-lg relative overflow-hidden rounded-b-[2.5rem]">
+  <div class="absolute -right-6 -bottom-6 opacity-15 pointer-events-none text-9xl"><i class="fa-solid fa-bus"></i></div>
+  <div class="absolute -left-8 top-2 opacity-15 pointer-events-none text-8xl"><i class="fa-solid fa-car-side"></i></div>
+  <div class="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4 relative z-10">
+    <div class="flex items-center gap-4 text-center md:text-left">
+      <div class="bg-tayo-yellow text-slate-900 w-16 h-16 rounded-2xl flex items-center justify-center text-3xl shadow-md border-4 border-white rotate-3">🚌</div>
+      <div>
+        <h1 class="text-3xl md:text-4xl font-bold tracking-wide">Smart Parking <span class="text-tayo-yellow text-2xl">★</span></h1>
+        <p class="text-sky-100 font-semibold text-sm md:text-base">Sistem Monitoring Parkir Pintar Teman Tayo</p>
+      </div>
+    </div>
+    <div class="bg-white/15 backdrop-blur-md px-5 py-2.5 rounded-full border-2 border-white/30 flex items-center gap-3">
+      <span id="fb-dot" class="w-3.5 h-3.5 rounded-full bg-tayo-yellow pulse-dot inline-block"></span>
+      <span id="fb-text" class="font-bold text-sm">Menghubungkan Firebase...</span>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-6xl mx-auto px-4 -mt-6 space-y-8">
+
+  <!-- ESP32 -->
+  <section class="card p-5 border-tayo-blue/30">
+    <div class="flex flex-col md:flex-row justify-between md:items-center gap-4 pb-4 border-b border-slate-100">
+      <div class="flex items-center gap-3">
+        <div class="w-12 h-12 rounded-xl bg-tayo-blue text-white flex items-center justify-center text-2xl"><i class="fa-solid fa-microchip"></i></div>
+        <div>
+          <h2 class="text-xl font-bold">ESP32 Microcontroller Dashboard</h2>
+          <p class="text-xs text-slate-500 font-semibold">Data slot &amp; Gate OUT dikirim ESP32 ke Firebase Realtime Database</p>
+        </div>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <span id="esp-tag" class="font-bold text-xs px-3 py-1.5 rounded-full border"></span>
+        <span class="bg-slate-100 text-slate-600 font-mono text-xs px-3 py-1.5 rounded-full border border-slate-200">RTDB: smartparking-e4101</span>
+      </div>
+    </div>
+    <div class="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <p id="esp-info" class="text-sm text-slate-500 font-semibold"></p>
+      <label class="flex items-center gap-3 cursor-pointer bg-slate-50 border border-slate-200 rounded-2xl px-4 py-2.5 self-start">
+        <input id="demo-toggle" type="checkbox" class="w-4 h-4 accent-[#0072CE]">
+        <span class="text-sm font-bold text-slate-700">Mode demo <span class="font-semibold text-slate-400">(simulasi lokal, tidak menimpa data ESP32)</span></span>
+      </label>
+    </div>
+  </section>
+
+  <!-- Statistik -->
+  <section class="grid grid-cols-1 md:grid-cols-3 gap-5">
+    <div class="card p-5 flex items-center gap-4 border-l-8 border-l-tayo-blue">
+      <div class="w-14 h-14 rounded-2xl bg-blue-100 text-tayo-blue flex items-center justify-center text-2xl shrink-0"><i class="fa-solid fa-square-parking"></i></div>
+      <div><p class="text-sm font-bold text-slate-400">Total slot</p><h3 id="st-total" class="text-3xl font-extrabold">2</h3></div>
+    </div>
+    <div class="card p-5 flex items-center gap-4 border-l-8 border-l-tayo-green">
+      <div class="w-14 h-14 rounded-2xl bg-green-100 text-tayo-green flex items-center justify-center text-2xl shrink-0"><i class="fa-solid fa-circle-check"></i></div>
+      <div><p class="text-sm font-bold text-slate-400">Slot tersedia</p><h3 id="st-free" class="text-3xl font-extrabold text-tayo-green">0</h3></div>
+    </div>
+    <div class="card p-5 flex items-center gap-4 border-l-8 border-l-tayo-red">
+      <div class="w-14 h-14 rounded-2xl bg-red-100 text-tayo-red flex items-center justify-center text-2xl shrink-0"><i class="fa-solid fa-car-burst"></i></div>
+      <div><p class="text-sm font-bold text-slate-400">Slot terisi</p><h3 id="st-busy" class="text-3xl font-extrabold text-tayo-red">0</h3></div>
+    </div>
+  </section>
+
+  <!-- Kamera Gate IN + micro:bit -->
+  <section class="card p-5 border-tayo-yellow/50">
+    <div class="flex flex-col md:flex-row justify-between md:items-center gap-3 pb-4 border-b border-slate-100">
+      <div class="flex items-center gap-3">
+        <div class="w-12 h-12 rounded-xl bg-tayo-yellow text-slate-900 flex items-center justify-center text-2xl"><i class="fa-solid fa-camera"></i></div>
+        <div>
+          <h2 class="text-xl font-bold">Kamera Gate IN &amp; micro:bit</h2>
+          <p class="text-xs text-slate-500 font-semibold">Teachable Machine mengenali mobil, micro:bit menggerakkan palang masuk</p>
+        </div>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button id="btn-cam" onclick="toggleCamera()" class="bg-tayo-blue hover:bg-blue-600 active:scale-95 text-white font-bold text-sm py-2 px-4 rounded-xl shadow transition"><i class="fa-solid fa-video"></i> Mulai kamera</button>
+        <button id="btn-mb" onclick="toggleMicrobit()" class="bg-slate-700 hover:bg-slate-800 active:scale-95 text-white font-bold text-sm py-2 px-4 rounded-xl shadow transition"><i class="fa-solid fa-plug"></i> Sambungkan micro:bit</button>
+      </div>
+    </div>
+    <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-5">
+      <div id="cam-box" class="bg-slate-100 rounded-xl border border-slate-200 aspect-[4/3] flex items-center justify-center text-slate-400 text-sm font-semibold overflow-hidden">Kamera belum aktif</div>
+      <div class="space-y-3">
+        <div class="flex flex-wrap gap-2">
+          <span id="cam-chip" class="text-xs font-bold px-3 py-1.5 rounded-full border bg-slate-100 text-slate-600 border-slate-300">Kamera mati</span>
+          <span id="mb-chip" class="text-xs font-bold px-3 py-1.5 rounded-full border bg-slate-100 text-slate-600 border-slate-300">micro:bit belum terhubung</span>
+        </div>
+        <p id="mb-last" class="text-xs font-mono text-slate-400 min-h-[1rem]"></p>
+        <div id="preds" class="space-y-2 text-sm font-semibold text-slate-600">
+          <p class="text-slate-400 text-xs">Hasil prediksi tampil di sini setelah kamera aktif.</p>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
+          <label class="text-xs font-bold text-slate-500">Kelas pemicu (mobil terdeteksi)
+            <select id="cls" class="mt-1 w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm font-semibold text-slate-700"></select></label>
+          <label class="text-xs font-bold text-slate-500">Ambang keyakinan: <span id="th-val">90</span>%
+            <input id="th" type="range" min="50" max="99" value="90" class="mt-2 w-full accent-[#0072CE]"></label>
+        </div>
+        <label class="flex items-center gap-2 cursor-pointer text-sm font-bold text-slate-700">
+          <input id="auto" type="checkbox" checked class="w-4 h-4 accent-[#0072CE]"> Buka Gate IN otomatis saat mobil terdeteksi
+        </label>
+      </div>
+    </div>
+  </section>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+    <!-- Slot -->
+    <div class="lg:col-span-2 space-y-4">
+      <div class="flex items-center justify-between px-2">
+        <h2 class="text-2xl font-bold flex items-center gap-2"><span>🚘</span> Status slot parkir (2 slot)</h2>
+        <span class="text-xs font-bold bg-tayo-yellow/30 px-3 py-1 rounded-full border border-tayo-yellow">Cermin sensor IR</span>
+      </div>
+      <div id="grid" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
+    </div>
+
+    <!-- Gerbang -->
+    <div class="space-y-4">
+      <h2 class="text-2xl font-bold flex items-center gap-2 px-2"><span>🚧</span> Gerbang parkir</h2>
+      <div id="gates" class="space-y-5"></div>
+    </div>
+  </div>
+
+  <!-- Log -->
+  <section class="card p-6">
+    <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-4 pb-3 border-b border-slate-100">
+      <div>
+        <h2 class="text-xl font-bold flex items-center gap-2"><i class="fa-solid fa-clock-rotate-left text-tayo-blue"></i> Riwayat &amp; log aktivitas</h2>
+        <p class="text-xs text-slate-400 font-semibold">Log dari ESP32 dan website, diperbarui real-time</p>
+      </div>
+      <button onclick="clearLogs()" class="text-xs font-bold text-slate-500 hover:text-tayo-red bg-slate-100 hover:bg-red-50 px-3.5 py-2 rounded-xl border border-slate-200 transition self-start">
+        <i class="fa-solid fa-trash-can"></i> Bersihkan log
+      </button>
+    </div>
+    <div class="overflow-x-auto max-h-64 overflow-y-auto pr-1">
+      <table class="w-full text-left text-sm">
+        <thead class="bg-slate-50 text-slate-500 font-bold sticky top-0 border-b border-slate-200">
+          <tr><th class="py-2.5 px-3">Waktu</th><th class="py-2.5 px-3">Aktivitas</th><th class="py-2.5 px-3 text-right">Status</th></tr>
+        </thead>
+        <tbody id="logs" class="divide-y divide-slate-100 font-medium"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<footer class="mt-12 text-center text-xs text-slate-400 font-bold">Smart Parking • ESP32 + Firebase Realtime Database</footer>
+
+<script>
+firebase.initializeApp({
+  apiKey:"AIzaSyBE94__ZTS33j372nSkbh8bpdFeDv9JZU0",
+  authDomain:"smartparking-e4101.firebaseapp.com",
+  databaseURL:"https://smartparking-e4101-default-rtdb.firebaseio.com"
+});
+const db=firebase.database();
+
+const HEARTBEAT_TIMEOUT=45000; // ESP32 kirim heartbeat tiap 30 dtk
+const slots={A:false,B:false};
+const gates={in:false,out:false};
+const pins={A:'GPIO 34',B:'GPIO 35'};
+let fb=null, demo=false, fbOnline=false, lastSig=null, lastSeen=null, ready=false, outTimer=null;
+const logs=[];
+
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const clock=d=>d.toTimeString().split(' ')[0];
+
+/* ---------- Render ---------- */
+function renderGates(){
+  $('gates').innerHTML=[
+    {t:'in',title:'Gate IN (masuk)',icon:'fa-arrow-right-to-bracket',top:'border-t-tayo-blue',base:'bg-tayo-blue',arm:'bg-tayo-red',stripe:'bg-white',emoji:'🚌',
+     note:'Servo di micro:bit • status disimpan di /parking/gateIn'},
+    {t:'out',title:'Gate OUT (keluar)',icon:'fa-arrow-right-from-bracket',top:'border-t-tayo-yellow',base:'bg-tayo-yellow',arm:'bg-tayo-yellow',stripe:'bg-slate-800',emoji:'🚕',
+     note:'Otomatis oleh ESP32 • sensor IR GPIO 33, servo GPIO 27'}
+  ].map(g=>{
+    const open=gates[g.t];
+    const badge=open?'bg-green-100 text-tayo-green border-green-200':'bg-red-100 text-tayo-red border-red-200';
+    let ctl='';
+    if(g.t==='in') ctl=`<div class="grid grid-cols-2 gap-2">
+      <button onclick="setGateIn(true)" class="bg-tayo-green hover:bg-green-600 active:scale-95 text-white font-bold py-2.5 rounded-xl shadow transition text-sm"><i class="fa-solid fa-lock-open"></i> Buka</button>
+      <button onclick="setGateIn(false)" class="bg-tayo-red hover:bg-red-600 active:scale-95 text-white font-bold py-2.5 rounded-xl shadow transition text-sm"><i class="fa-solid fa-lock"></i> Tutup</button></div>`;
+    else if(demo) ctl=`<button onclick="demoOut()" class="w-full bg-tayo-blue hover:bg-blue-600 active:scale-95 text-white font-bold py-2.5 rounded-xl shadow transition text-sm"><i class="fa-solid fa-car-side"></i> Simulasi mobil keluar</button>`;
+    else ctl=`<p class="text-xs text-center text-slate-400 font-semibold">Hanya menampilkan status dari ESP32</p>`;
+    return `<div class="card p-5 border-t-4 ${g.top}">
+      <div class="flex justify-between items-center mb-1">
+        <h3 class="font-bold text-lg flex items-center gap-2"><i class="fa-solid ${g.icon} text-tayo-blue"></i> ${g.title}</h3>
+        <span class="px-3 py-1 rounded-full text-xs font-extrabold border ${badge}">${open?'TERBUKA':'TUTUP'}</span>
+      </div>
+      <p class="text-xs font-mono text-slate-400 mb-3">${g.note}</p>
+      <div class="bg-slate-100 rounded-xl p-4 mb-4 flex items-end justify-between h-20 relative overflow-hidden border border-slate-200">
+        <div class="w-6 h-12 ${g.base} rounded-t-md border-2 border-slate-700 flex flex-col justify-around items-center z-10">
+          <div class="w-3 h-3 ${open?'bg-slate-300':'bg-red-500'} rounded-full"></div><div class="w-3 h-3 ${open?'bg-green-500':'bg-slate-300'} rounded-full"></div></div>
+        <div class="gate-arm ${open?'open':''} absolute left-8 bottom-3 w-4/5 h-3 ${g.arm} border-2 border-slate-800 rounded-r-full flex items-center justify-around px-2">
+          <div class="w-4 h-full ${g.stripe}"></div><div class="w-4 h-full ${g.stripe}"></div><div class="w-4 h-full ${g.stripe}"></div></div>
+        <div class="text-2xl text-slate-400">${g.emoji}</div>
+      </div>${ctl}</div>`;
+  }).join('');
+}
+
+function renderSlots(){
+  $('grid').innerHTML=['A','B'].map(k=>{
+    const o=slots[k];
+    return `<div class="slot card p-5 flex flex-col items-center justify-between min-h-[190px] text-center ${demo?'demo':''} ${o?'bg-red-50/50 border-tayo-red/40':'bg-green-50/50 border-tayo-green/40'}" ${demo?`onclick="demoSlot('${k}')"`:''}>
+      <div class="w-full flex justify-between items-center border-b border-slate-200/60 pb-2">
+        <div class="text-left"><span class="font-title text-2xl font-bold text-slate-700">Slot ${k}</span>
+          <span class="block text-[10px] font-mono text-slate-400">Sensor IR [${pins[k]}]</span></div>
+        <span class="${o?'bg-tayo-red':'bg-tayo-green'} text-white text-[10px] font-extrabold px-2.5 py-0.5 rounded-full">${o?'Terisi':'Tersedia'}</span>
+      </div>
+      <div class="${o?'text-5xl':'text-4xl text-slate-300 opacity-60'} my-3">${o?'🚌':'🅿️'}</div>
+      <div class="text-xs font-semibold text-slate-500">${o?'Ada objek di depan sensor':'Kosong, area bebas'}${demo?' • klik untuk ubah':''}</div></div>`;
+  }).join('');
+  const busy=Object.values(slots).filter(Boolean).length;
+  $('st-busy').textContent=busy; $('st-free').textContent=2-busy;
+}
+
+function renderEsp(){
+  const tag=$('esp-tag'), info=$('esp-info');
+  let cls,html,txt;
+  if(!fbOnline){cls='bg-slate-100 text-slate-600 border-slate-300';html='bg-slate-400';txt='FIREBASE OFFLINE';info.textContent='Tidak terhubung ke Firebase. Periksa koneksi internet.';}
+  else if(lastSeen===null){cls='bg-amber-100 text-amber-700 border-amber-300';html='bg-amber-500';txt='MENUNGGU ESP32';info.textContent='Menunggu data terbaru dari ESP32 (dikirim tiap ±30 detik).';}
+  else{
+    const age=Date.now()-lastSeen;
+    if(age<HEARTBEAT_TIMEOUT){cls='bg-emerald-100 text-emerald-700 border-emerald-300';html='bg-emerald-500 pulse-dot';txt='ESP32 ONLINE';}
+    else{cls='bg-red-100 text-tayo-red border-red-300';html='bg-red-500';txt='ESP32 OFFLINE';}
+    info.textContent='Data terakhir dari ESP32: '+Math.round(age/1000)+' detik lalu.';
+  }
+  tag.className='font-bold text-xs px-3 py-1.5 rounded-full border flex items-center gap-1.5 '+cls;
+  tag.innerHTML=`<span class="w-2.5 h-2.5 rounded-full ${html}"></span> ${txt}`;
+}
+
+function renderLogs(){
+  $('logs').innerHTML=logs.length?logs.map(l=>{
+    const e=l.event.toLowerCase();
+    let b='bg-blue-100 text-tayo-blue';
+    if(/terbuka|kosong|terhubung/.test(e)) b='bg-green-100 text-tayo-green';
+    else if(/tertutup|terisi|terputus/.test(e)) b='bg-red-100 text-tayo-red';
+    return `<tr class="hover:bg-slate-50/80"><td class="py-3 px-3 text-slate-400 text-xs font-mono font-bold whitespace-nowrap">${esc(l.time)}</td>
+      <td class="py-3 px-3"><span class="font-bold text-slate-700">${esc(l.source)}</span><span class="text-xs text-slate-400 block sm:inline sm:ml-2">${esc(l.event)}</span></td>
+      <td class="py-3 px-3 text-right"><span class="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${b}">${esc(l.event)}</span></td></tr>`;
+  }).join(''):`<tr><td colspan="3" class="py-4 text-center text-slate-400 font-semibold italic">Belum ada riwayat aktivitas.</td></tr>`;
+}
+
+/* ---------- Data dari Firebase ---------- */
+function applyData(){
+  const d=fb||{}, prevIn=gates.in;
+  if(!demo){
+    slots.A=!!(d.slotA&&d.slotA.occupied);
+    slots.B=!!(d.slotB&&d.slotB.occupied);
+    gates.out=!!(d.gateOut&&d.gateOut.status==='terbuka');
+    gates.in=!!(d.gateIn&&d.gateIn.status==='terbuka');
+    if(gates.in!==prevIn) sendMb(gates.in?'OPEN':'CLOSE'); // micro:bit mengikuti status Firebase
+  }
+  renderSlots(); renderGates();
+}
+
+function addLocal(source,event){logs.unshift({time:clock(new Date()),source,event});if(logs.length>60)logs.pop();renderLogs();}
+
+db.ref('.info/connected').on('value',s=>{
+  fbOnline=s.val()===true;
+  $('fb-dot').className='w-3.5 h-3.5 rounded-full inline-block '+(fbOnline?'bg-tayo-green pulse-dot':'bg-tayo-red');
+  $('fb-text').textContent=fbOnline?'Firebase RTDB online':'Firebase offline';
+  if(ready) addLocal('Firebase RTDB',fbOnline?'Terhubung':'Terputus');
+  renderEsp();
+});
+
+db.ref('parking').on('value',s=>{
+  fb=s.val();
+  const d=fb||{};
+  // ESP32 memperbarui "updated" (millis) tiap heartbeat -> tanda ESP32 hidup
+  const sig=[d.slotA&&d.slotA.updated,d.slotB&&d.slotB.updated,d.gateOut&&d.gateOut.updated].join('|');
+  if(lastSig!==null&&sig!==lastSig) lastSeen=Date.now();
+  lastSig=sig;
+  applyData(); renderEsp();
+},err=>addLocal('Firebase RTDB','Gagal membaca: '+err.code+' (cek Rules database)'));
+
+db.ref('logs').limitToLast(60).on('child_added',s=>{
+  const v=s.val()||{};
+  let time;
+  if(v.time>1e12) time=clock(new Date(v.time));            // log dari website (epoch)
+  else time=ready?clock(new Date()):'uptime '+new Date(v.time||0).toISOString().substr(11,8); // log ESP32 (millis)
+  logs.unshift({time,source:v.source==='esp32'?'ESP32':(v.source==='web'?'Website':(v.source||'-')),event:v.event||'-'});
+  if(logs.length>60)logs.pop();
+  if(ready)renderLogs();
+});
+db.ref('logs').once('value',()=>{ready=true;renderLogs();});
+db.ref('logs').on('value',s=>{if(!s.exists()&&ready){logs.length=0;renderLogs();}});
+
+/* ---------- Aksi pengguna ---------- */
+function pushLog(event){
+  db.ref('logs/web_'+Date.now()+'_'+Math.floor(Math.random()*9000+1000)).set({time:Date.now(),source:'web',event}).catch(()=>{});
+}
+
+function setGateIn(open,via){
+  if(gates.in===open) return;
+  if(demo){gates.in=open;renderGates();addLocal('Demo','Gate IN '+(open?'terbuka':'tertutup'));return;}
+  db.ref('parking/gateIn').set({status:open?'terbuka':'tertutup',updated:Date.now()})
+    .then(()=>pushLog('Gate IN '+(open?'terbuka':'tertutup')+(via?' ('+via+')':'')))
+    .catch(e=>addLocal('Firebase RTDB','Gagal mengirim: '+e.code));
+}
+
+function demoSlot(k){
+  if(!demo) return;
+  slots[k]=!slots[k]; renderSlots();
+  addLocal('Demo','Slot '+k+' '+(slots[k]?'terisi':'kosong'));
+}
+
+function demoOut(){
+  if(!demo||gates.out) return;
+  gates.out=true; renderGates(); addLocal('Demo','Gate OUT terbuka');
+  clearTimeout(outTimer);
+  outTimer=setTimeout(()=>{gates.out=false;renderGates();addLocal('Demo','Gate OUT tertutup');},4000);
+}
+
+function clearLogs(){
+  logs.length=0; renderLogs();
+  db.ref('logs').remove().catch(e=>addLocal('Firebase RTDB','Gagal menghapus log: '+e.code));
+}
+
+$('demo-toggle').addEventListener('change',e=>{
+  demo=e.target.checked;
+  clearTimeout(outTimer);
+  addLocal('Website',demo?'Mode demo aktif':'Mode demo mati, kembali ke data ESP32');
+  applyData();
+});
+
+/* ---------- micro:bit (Web Serial, 115200 baud) ---------- */
+let port=null,writer=null,reader=null,mbOn=false;
+const enc=new TextEncoder();
+function setMb(on,msg){
+  mbOn=on;
+  $('btn-mb').innerHTML=on?'<i class="fa-solid fa-plug-circle-xmark"></i> Putuskan micro:bit':'<i class="fa-solid fa-plug"></i> Sambungkan micro:bit';
+  $('mb-chip').className='text-xs font-bold px-3 py-1.5 rounded-full border '+(on?'bg-emerald-100 text-emerald-700 border-emerald-300':'bg-slate-100 text-slate-600 border-slate-300');
+  $('mb-chip').textContent=msg;
+}
+function sendMb(cmd){
+  if(!mbOn||!writer) return;
+  writer.write(enc.encode(cmd+'\n')).catch(e=>addLocal('micro:bit','Gagal kirim: '+e.message));
+}
+async function toggleMicrobit(){
+  if(mbOn){await closeMb();return;}
+  if(!('serial' in navigator)){addLocal('micro:bit','Browser tidak mendukung Web Serial. Pakai Chrome atau Edge di desktop.');return;}
+  try{
+    port=await navigator.serial.requestPort({filters:[{usbVendorId:0x0D28}]});
+    await port.open({baudRate:115200});
+    writer=port.writable.getWriter();
+    setMb(true,'micro:bit terhubung'); addLocal('micro:bit','Terhubung via USB');
+    sendMb(gates.in?'OPEN':'CLOSE'); readMb();
+  }catch(e){addLocal('micro:bit','Gagal menyambung: '+e.message);}
+}
+async function readMb(){
+  const dec=new TextDecoder(); let buf='';
+  try{
+    reader=port.readable.getReader();
+    for(;;){
+      const {value,done}=await reader.read(); if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      let i; while((i=buf.indexOf('\n'))>=0){onMb(buf.slice(0,i).trim());buf=buf.slice(i+1);}
+    }
+  }catch(e){}
+  try{reader.releaseLock();}catch(e){} reader=null;
+}
+function onMb(line){
+  if(!line) return;
+  $('mb-last').textContent='micro:bit: '+line;
+  const u=line.toUpperCase(), open=u.includes('OPENED')?true:u.includes('CLOSED')?false:null;
+  if(open!==null&&!demo&&gates.in!==open) setGateIn(open,'micro:bit');
+}
+async function closeMb(){
+  try{if(reader)await reader.cancel();}catch(e){}
+  await new Promise(r=>setTimeout(r,100));
+  try{writer&&writer.releaseLock();}catch(e){}
+  try{await port.close();}catch(e){}
+  port=writer=null; setMb(false,'micro:bit belum terhubung'); addLocal('micro:bit','Terputus');
+}
+if('serial' in navigator) navigator.serial.addEventListener('disconnect',()=>{if(mbOn){port=writer=reader=null;setMb(false,'micro:bit terlepas');addLocal('micro:bit','Kabel USB terlepas');}});
+
+/* ---------- Kamera + Teachable Machine ---------- */
+const TM='https://teachablemachine.withgoogle.com/models/lDeafWJrL/';
+let model=null,cam=null,camOn=false,lastPred=0,hitSince=0,lastHit=0,lastClose=0,openedByCam=false;
+const store={get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}};
+$('th').value=store.get('tmTh')||90; $('th-val').textContent=$('th').value;
+$('th').addEventListener('input',e=>{$('th-val').textContent=e.target.value;store.set('tmTh',e.target.value);});
+$('cls').addEventListener('change',e=>store.set('tmCls',e.target.value));
+
+function setCam(msg,on){
+  $('cam-chip').textContent=msg;
+  $('cam-chip').className='text-xs font-bold px-3 py-1.5 rounded-full border '+(on?'bg-emerald-100 text-emerald-700 border-emerald-300':'bg-slate-100 text-slate-600 border-slate-300');
+}
+async function toggleCamera(){
+  if(camOn){stopCamera();return;}
+  const b=$('btn-cam'); b.disabled=true; setCam('Memuat model...',false);
+  try{
+    if(!model){
+      model=await tmImage.load(TM+'model.json',TM+'metadata.json');
+      const labels=model.getClassLabels(), saved=store.get('tmCls');
+      const guess=labels.find(l=>/mobil|car|bus|kendaraan|vehicle|ada/i.test(l)&&!/tidak|kosong|empty|none|background|no\b/i.test(l))||labels[0];
+      $('cls').innerHTML=labels.map(l=>`<option value="${esc(l)}">${esc(l)}</option>`).join('');
+      $('cls').value=labels.includes(saved)?saved:guess;
+    }
+    cam=new tmImage.Webcam(320,240,false);
+    await cam.setup(); await cam.play();
+    $('cam-box').replaceChildren(cam.canvas);
+    camOn=true; hitSince=0; setCam('Kamera aktif',true);
+    b.innerHTML='<i class="fa-solid fa-video-slash"></i> Matikan kamera';
+    addLocal('Kamera','Aktif, model Teachable Machine dimuat');
+    requestAnimationFrame(camLoop);
+  }catch(e){
+    setCam('Kamera gagal',false);
+    addLocal('Kamera','Gagal: '+(e.message||e)+' (izinkan kamera; buka lewat https atau localhost)');
+  }
+  b.disabled=false;
+}
+function stopCamera(){
+  camOn=false; try{cam.stop();}catch(e){} cam=null;
+  $('cam-box').textContent='Kamera belum aktif'; setCam('Kamera mati',false);
+  $('btn-cam').innerHTML='<i class="fa-solid fa-video"></i> Mulai kamera';
+  $('preds').innerHTML='<p class="text-slate-400 text-xs">Kamera dimatikan.</p>';
+  addLocal('Kamera','Dimatikan');
+}
+async function camLoop(t){
+  if(!camOn) return;
+  cam.update();
+  if(t-lastPred>200){lastPred=t;try{await detect();}catch(e){}}
+  if(camOn) requestAnimationFrame(camLoop);
+}
+async function detect(){
+  const preds=await model.predict(cam.canvas), cls=$('cls').value, th=$('th').value/100, now=Date.now();
+  $('preds').innerHTML=preds.map(p=>{
+    const pc=Math.round(p.probability*100), on=p.className===cls;
+    return `<div><div class="flex justify-between text-xs"><span>${esc(p.className)}${on?' ★':''}</span><span>${pc}%</span></div>
+      <div class="h-2.5 bg-slate-100 rounded-full overflow-hidden"><div class="h-full ${on?'bg-tayo-blue':'bg-slate-300'}" style="width:${pc}%"></div></div></div>`;
+  }).join('');
+  const hit=(preds.find(p=>p.className===cls)||{probability:0}).probability>=th;
+  if(hit){ if(!hitSince)hitSince=now; lastHit=now; } else hitSince=0;
+  if(!$('auto').checked) return;
+  // buka bila terdeteksi stabil ±1 detik, tutup 4 detik setelah mobil hilang
+  if(hit&&now-hitSince>=1000&&!gates.in&&now-lastClose>3000){openedByCam=true;setGateIn(true,'kamera');}
+  else if(gates.in&&openedByCam&&!hit&&now-lastHit>4000){openedByCam=false;lastClose=now;setGateIn(false,'kamera');}
+}
+
+/* ---------- Init ---------- */
+renderSlots(); renderGates(); renderEsp(); renderLogs();
+setInterval(renderEsp,1000);
+</script>
+</body>
+</html>
